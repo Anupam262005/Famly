@@ -8,7 +8,7 @@ const AddGroupIcon = () => (
     </svg>
 );
 
-export default function CreateFamily({ onClose, onGroupCreated }) {
+export default function CreateGroup({ onClose, onGroupCreated }) {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);

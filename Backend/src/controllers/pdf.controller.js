@@ -691,7 +691,7 @@ export const generateFamilyStoriesPDF = async (req, res) => {
     </html>`;
 
     // 🧩 Generate PDF using Puppeteer
-    const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox"] });
+    const browser = await puppeteer.launch({ headless: true, args: ["--no-sandbox",'--disable-setuid-sandbox'] });
     const page = await browser.newPage();
     await page.setContent(htmlContent, { waitUntil: "networkidle0" });
 

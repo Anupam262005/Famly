@@ -1,4 +1,4 @@
-<h1>Famly — Connecting Generations</h1>
+<h1>Famly — Connecting All the Generations </h1>
 <h2><i>Because every story deserves to be remembered.</i></h2>
 
 <h2>Created by Team Diamond</h2>
