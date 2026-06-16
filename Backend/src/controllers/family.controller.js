@@ -1,94 +1,15 @@
-import {User,Family,Membership} from "../models/index.js";
+import { User, Family, Membership } from "../models/index.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import {asyncHandler} from "../utils/asyncHandler.js";
+import { asyncHandler } from "../utils/asyncHandler.js";
 import { uploadOnCloudinary, deleteImageOnCloudinary } from "../utils/cloudinary.js";
 import { Op } from 'sequelize';
-import Sequelize from "sequelize";
 import { sequelize } from "../db/index.js"
-
-// Simple readable invitation code generator
-// const generateInvitationCode = () => {
-//   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // exclude confusing letters
-//   let code = "FAM-";
-//   for (let i = 0; i < 6; i++) {
-//     code += chars[Math.floor(Math.random() * chars.length)];
-//   }
-//   return code;
-// };
-
-// const createFamily = asyncHandler(async (req, res) => {
-//   const { family_name, marriage_date, description } = req.body;
-
-//   // Get the user creating the family
-//   const user = await User.findByPk(Number(req.user.user_id));
-//   if (!user) throw new ApiError(404, "User not found");
-
-//   // Check if the user is already a root member in any family
-//   const existingRootFamily = await Family.findOne({
-//     where: {
-//       [Op.or]: [
-//         { male_root_member: user.user_id },
-//         { female_root_member: user.user_id },
-//       ],
-//     },
-//   });
-
-//   if (existingRootFamily) {
-//     throw new ApiError(400, "You are already a root member of another family and cannot create a new family");
-//   }
-
-//   // Determine root member based on user gender
-//   let male_root_member = null;
-//   let female_root_member = null;
-//   let ancestor = null;
-
-//   if (user.gender.toLowerCase() === "male") {
-//     male_root_member = user.user_id;
-//     ancestor = user.parent_family || null; // ancestor is male root member's parent family
-//   } else if (user.gender.toLowerCase() === "female") {
-//     female_root_member = user.user_id;
-//   } else {
-//     throw new ApiError(400, "User gender must be male or female");
-//   }
-
-//   // Upload familyPhoto if provided
-//   let familyPhotoUrl = "https://res.cloudinary.com/famly/image/upload/v1759747171/default-family-image_vjfu7v.jpg";
-//   if (req.file) {
-//     familyPhotoUrl = (await uploadOnCloudinary(req.file.path, "image")).secure_url;
-//   }
-
-//   // Generate invitation code
-//   const invitation_code = generateInvitationCode();
-
-//   // Create family
-//   const newFamily = await Family.create({
-//     family_name,
-//     marriage_date,
-//     description: description || null,
-//     familyPhoto: familyPhotoUrl,
-//     created_by: user.user_id,
-//     male_root_member,
-//     female_root_member,
-//     ancestor,
-//     invitation_code,
-//   });
-
-//   console.log("hii" ,newFamily.family_id)
-//    const rootMemberId = male_root_member || female_root_member;
-//    await Membership.create({
-//     family_id: newFamily.family_id,
-//     user_id: rootMemberId,
-//     role: "admin",   // root member gets admin role
-//   });
-
-//   return res
-//     .status(201)
-//     .json(new ApiResponse(201, newFamily, "Family created successfully"));
-// });
+import { Notification } from "../models/notification.models.js";
+import { emitToUser, emitUnreadCount } from "../socketServer.js";
 
 const generateInvitationCode = () => {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // exclude confusing letters
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "FAM-";
   for (let i = 0; i < 6; i++) {
     code += chars[Math.floor(Math.random() * chars.length)];
@@ -96,25 +17,29 @@ const generateInvitationCode = () => {
   return code;
 };
 
-// Helper function to check if user is root member of a family
 const isRootMember = (family, userId) => {
-  return Number(family.male_root_member) === Number(userId) || 
-         Number(family.female_root_member) === Number(userId);
+  return Number(family.male_root_member) === Number(userId) ||
+    Number(family.female_root_member) === Number(userId);
+};
+
+// Internal helper: push notification live + update badge count
+const pushAndBadge = async (notification) => {
+  const { userId } = notification;
+  emitToUser(userId, "new_notification", notification);
+  const unread = await Notification.countDocuments({ userId, status: "unread" });
+  emitUnreadCount(userId, unread);
 };
 
 const createFamily = asyncHandler(async (req, res) => {
   const { family_name, marriage_date, description } = req.body;
 
-  // Validate required fields
   if (!family_name || !marriage_date) {
     throw new ApiError(400, "Family name and marriage date are required");
   }
 
-  // Get the user creating the family
   const user = await User.findByPk(Number(req.user.user_id));
   if (!user) throw new ApiError(404, "User not found");
 
-  // Check if the user is already a root member in any family
   const existingRootFamily = await Family.findOne({
     where: {
       [Op.or]: [
@@ -128,7 +53,6 @@ const createFamily = asyncHandler(async (req, res) => {
     throw new ApiError(400, "You are already a root member of another family and cannot create a new family");
   }
 
-  // Determine root member based on user gender
   let male_root_member = null;
   let female_root_member = null;
   let ancestor = null;
@@ -138,13 +62,10 @@ const createFamily = asyncHandler(async (req, res) => {
     ancestor = user.parent_family || null;
   } else if (user.gender.toLowerCase() === "female") {
     female_root_member = user.user_id;
-    
-
   } else {
     throw new ApiError(400, "User gender must be male or female");
   }
 
-  // Upload familyPhoto if provided
   let familyPhotoUrl = "https://res.cloudinary.com/famly/image/upload/v1759747171/default-family-image_vjfu7v.jpg";
   if (req.file) {
     try {
@@ -156,28 +77,22 @@ const createFamily = asyncHandler(async (req, res) => {
     }
   }
 
-  // Generate unique invitation code
   let invitation_code;
   let isUnique = false;
   let attempts = 0;
-  
+
   while (!isUnique && attempts < 10) {
     invitation_code = generateInvitationCode();
     const existingFamily = await Family.findOne({ where: { invitation_code } });
-    if (!existingFamily) {
-      isUnique = true;
-    }
+    if (!existingFamily) isUnique = true;
     attempts++;
   }
 
-  if (!isUnique) {
-    throw new ApiError(500, "Failed to generate unique invitation code");
-  }
+  if (!isUnique) throw new ApiError(500, "Failed to generate unique invitation code");
 
   const transaction = await Family.sequelize.transaction();
-  
+
   try {
-    // Create family
     const newFamily = await Family.create({
       family_name,
       marriage_date,
@@ -190,19 +105,12 @@ const createFamily = asyncHandler(async (req, res) => {
       invitation_code,
     }, { transaction });
 
-    // Add creator as member
     const rootMemberId = male_root_member || female_root_member;
     await Membership.create({
       family_id: newFamily.family_id,
       user_id: rootMemberId,
       role: "admin",
     }, { transaction });
-
-    // // Update user's parent_family
-    // await User.update(
-    //   { parent_family: newFamily.family_id },
-    //   { where: { user_id: rootMemberId }, transaction }
-    // );
 
     await transaction.commit();
 
@@ -216,63 +124,20 @@ const createFamily = asyncHandler(async (req, res) => {
   }
 });
 
-// const getFamily = asyncHandler(async (req, res) => {
-//   const { familyId } = req.params;
-
-//   // Fetch family
-//   const family = await Family.findByPk(familyId, {
-//     include: [
-//       // Root members
-//       { model: User, as: "maleRoot", attributes: ["user_id", "username" ,"fullname", "email", "gender", "profilePhoto"] },
-//       { model: User, as: "femaleRoot", attributes: ["user_id", "username" ,"fullname", "email", "gender", "profilePhoto"] },
-
-//       // All memberships with user info
-//       {
-//         model: Membership,
-//         as: "memberships",
-//         include: [
-//           { model: User, as: "user", attributes: ["user_id", "username" , "fullname", "email", "gender", "profilePhoto"] },
-//         ],
-//       },
-//     ],
-//   });
-
-//   if (!family) throw new ApiError(404, "Family not found");
-
-//   return res
-//     .status(200)
-//     .json(new ApiResponse(200, family, "Family fetched successfully"));
-// });
-
 const getFamily = asyncHandler(async (req, res) => {
   const { familyId } = req.params;
 
-  if (!familyId) {
-    throw new ApiError(400, "Family ID is required");
-  }
+  if (!familyId) throw new ApiError(400, "Family ID is required");
 
-  // Fetch family
   const family = await Family.findByPk(familyId, {
     include: [
-      { 
-        model: User, 
-        as: "maleRoot", 
-        attributes: ["user_id", "username", "fullname", "email", "gender", "profilePhoto"] 
-      },
-      { 
-        model: User, 
-        as: "femaleRoot", 
-        attributes: ["user_id", "username", "fullname", "email", "gender", "profilePhoto"] 
-      },
+      { model: User, as: "maleRoot", attributes: ["user_id", "username", "fullname", "email", "gender", "profilePhoto"] },
+      { model: User, as: "femaleRoot", attributes: ["user_id", "username", "fullname", "email", "gender", "profilePhoto"] },
       {
         model: Membership,
         as: "memberships",
         include: [
-          { 
-            model: User, 
-            as: "user", 
-            attributes: ["user_id", "username", "fullname", "email", "gender", "profilePhoto"] 
-          },
+          { model: User, as: "user", attributes: ["user_id", "username", "fullname", "email", "gender", "profilePhoto"] },
         ],
       },
     ],
@@ -280,426 +145,478 @@ const getFamily = asyncHandler(async (req, res) => {
 
   if (!family) throw new ApiError(404, "Family not found");
 
-  return res
-    .status(200)
-    .json(new ApiResponse(200, family, "Family fetched successfully"));
+  return res.status(200).json(new ApiResponse(200, family, "Family fetched successfully"));
 });
 
-// const addMember = asyncHandler(async (req, res) => {
-// const family_id = Number(req.params.family_id);
-// const user_id = Number(req.body.user_id);
+// ─── GET MY FAMILIES ──────────────────────────────────────────────────────────
+const getMyFamilies = asyncHandler(async (req, res) => {
+  const userId = Number(req.user.user_id);
 
+  const memberships = await Membership.findAll({ where: { user_id: userId } });
+  const familyIds = memberships.map((m) => m.family_id);
 
-//   if (!family_id || !user_id) {
-//     throw new ApiError(400, "family_id and user_id are required");
-//   }
+  const families = await Family.findAll({
+    where: {
+      [Op.or]: [
+        { family_id: familyIds },
+        { male_root_member: userId },
+        { female_root_member: userId }
+      ]
+    },
+    order: [['created_at', 'DESC']],
+  });
 
-//   // Check if family exists
-//   const family = await Family.findByPk(family_id);
-//   if (!family) throw new ApiError(404, "Family not found");
+  if (!families || families.length === 0) {
+    return res.status(200).json(new ApiResponse(200, [], "You are not in any families yet"));
+  }
 
-//   // Check if user exists
-//   const user = await User.findByPk(user_id);
-//   if (!user) throw new ApiError(404, "User not found");
+  return res.status(200).json(new ApiResponse(200, families, "Fetched your families successfully"));
+});
 
-//    // Check if user already has a parent family
-//   if (user.parent_family !== null) {
-//     throw new ApiError(400, "User already belongs to another family and cannot be added");
-//   }
-
-//   const currentUserId = Number(req.user.user_id);
-//   if (Number(family.male_root_member) !== currentUserId && Number(family.female_root_member) !== currentUserId) {
-//     throw new ApiError(403, "Only root members can remove members from this family");
-//   }
-//   // Check if user is already a member
-//   const existingMembership = await Membership.findOne({
-//     where: { family_id, user_id },
-//   });
-//   if (existingMembership) throw new ApiError(400, "User is already a member of this family");
-
-//   // Create membership
-//   const membership = await Membership.create({
-//     family_id,
-//     user_id,
-//     role: "member",
-//   });
-
-//    // Update user's parent_family
-//   user.parent_family = family_id;
-//   await user.save();
-
-//   // If user is male, check if he is a root member of any other family
-//   if (user.gender.toLowerCase() === "male") {
-//     const maleRootFamilies = await Family.findAll({
-//       where: { male_root_member: user.user_id },
-//     });
-
-//     // Update ancestor of those families to this family
-//     for (const f of maleRootFamilies) {
-//       f.ancestor = family_id;
-//       await f.save();
-//     }
-//   }
-
-//   return res
-//     .status(201)
-//     .json(new ApiResponse(201, membership, "Member added successfully"));
-// });
-
+// ─── ADD MEMBER (sends acceptance invitation notification to user) ─────────────
+// Admin sends a notification to the user asking them to accept family membership
 const addMember = asyncHandler(async (req, res) => {
   const family_id = Number(req.params.family_id);
-  const username = req.body.username; // Get username from request body
+  const username = req.body.username;
 
-  if (!family_id || !username) {
-    throw new ApiError(400, "family_id and username are required");
+  if (!family_id || !username) throw new ApiError(400, "family_id and username are required");
+
+  // Check if family exists
+  const family = await Family.findByPk(family_id);
+  if (!family) throw new ApiError(404, "Family not found");
+
+  // Check if current user is root member
+  if (!isRootMember(family, req.user.user_id)) {
+    throw new ApiError(403, "Only root members can add members to this family");
   }
 
-  const transaction = await Family.sequelize.transaction();
+  // Check if user exists by username
+  const user = await User.findOne({ where: { username: username } });
+  if (!user) throw new ApiError(404, "User not found");
 
-  try {
-    // Check if family exists
-    const family = await Family.findByPk(family_id, { transaction });
-    if (!family) throw new ApiError(404, "Family not found");
+  // Prevent adding yourself
+  if (Number(req.user.user_id) === user.user_id) {
+    throw new ApiError(400, "You cannot add yourself as a member");
+  }
 
-    // Check if current user is root member
-    if (!isRootMember(family, req.user.user_id)) {
-      throw new ApiError(403, "Only root members can add members to this family");
-    }
+  // Check if user already has a parent family
+  if (user.parent_family !== null) {
+    throw new ApiError(400, "This user already belongs to a family and cannot be added");
+  }
 
-    // Check if user exists by username
-    const user = await User.findOne({ 
-      where: { username: username },
-      transaction 
-    });
-    if (!user) throw new ApiError(404, "User not found");
+  // Check if user is already a member of this family
+  const existingMembership = await Membership.findOne({ where: { family_id, user_id: user.user_id } });
+  if (existingMembership) throw new ApiError(400, "User is already a member of this family");
 
-    const user_id = user.user_id;
+  // Check if there's already a pending invitation for this user+family
+  const existingInvitation = await Notification.findOne({
+    userId: user.user_id,
+    type: "family_invitation",
+    "familyInvitation.familyId": String(family_id),
+    "familyInvitation.decision": "pending",
+  });
+  if (existingInvitation) throw new ApiError(400, "An invitation is already pending for this user");
 
-    // Check if user already has a parent family
-    if (user.parent_family !== null) {
-      throw new ApiError(400, "User already belongs to another family and cannot be added");
-    }
+  const adminUser = await User.findByPk(Number(req.user.user_id));
+  const adminName = adminUser?.fullname || "Family Admin";
 
-    // Check if user is already a member of this family
-    const existingMembership = await Membership.findOne({
-      where: { family_id, user_id },
-      transaction
-    });
-    if (existingMembership) throw new ApiError(400, "User is already a member of this family");
-
-    // Prevent adding yourself as a member
-    if (Number(req.user.user_id) === user_id) {
-      throw new ApiError(400, "You cannot add yourself as a member");
-    }
-
-    // Create membership
-    const membership = await Membership.create({
-      family_id,
-      user_id,
+  // Create invitation notification for the target user
+  const notif = await Notification.create({
+    userId: user.user_id,
+    type: "family_invitation",
+    title: `Family Invitation — ${family.family_name}`,
+    message: `${adminName} has invited you to join the ${family.family_name} family as a member.`,
+    status: "unread",
+    familyInvitation: {
+      invitedBy: Number(req.user.user_id),
+      invitedByName: adminName,
+      familyId: String(family_id),
+      familyName: family.family_name,
       role: "member",
-    }, { transaction });
+      decision: "pending",
+    },
+  });
 
-    // Update user's parent_family
-    await User.update(
-      { parent_family: family_id },
-      { where: { user_id }, transaction }
-    );
+  await pushAndBadge(notif);
 
-    // If user is male, update ancestor of his root families
-    if (user.gender.toLowerCase() === "male") {
-      await Family.update(
-        { ancestor: family_id },
-        { 
-          where: { 
-            male_root_member: user.user_id,
-            family_id: { [Op.ne]: family_id } // Don't update the current family
-          },
-          transaction 
-        }
-      );
-    }
-
-    await transaction.commit();
-
-    return res
-      .status(201)
-      .json(new ApiResponse(201, membership, "Member added successfully"));
-
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
-  }
+  return res
+    .status(200)
+    .json(new ApiResponse(200, notif, `Invitation sent to ${user.fullname}. They must accept to join the family.`));
 });
 
-// const addRootMember = asyncHandler(async (req, res) => {
-//   const targetUserId = Number(req.body.user_id);
-//   if (!targetUserId) throw new ApiError(400, "user_id is required");
-
-//   // Get current user
-//   const currentUser = await User.findByPk(Number(req.user.user_id));
-//   if (!currentUser) throw new ApiError(404, "Current user not found");
-
-//   // Get target user
-//   const targetUser = await User.findByPk(targetUserId);
-//   if (!targetUser) throw new ApiError(404, "Target user not found");
-
-//   // Check if target user is already a root member in another family
-//   const existingRootFamily = await Family.findOne({
-//     where: {
-//       [Op.or]: [
-//         { male_root_member: targetUser.user_id },
-//         { female_root_member: targetUser.user_id },
-//       ],
-//     },
-//   });
-//   if (existingRootFamily) {
-//     throw new ApiError(400, "This user is already a root member of another family");
-//   }
-
-//   // Fetch the family in which current user is already a root member
-//   const family = await Family.findOne({
-//     where: {
-//       [Op.or]: [
-//         { male_root_member: currentUser.user_id },
-//         { female_root_member: currentUser.user_id },
-//       ],
-//     },
-//   });
-//   if (!family) throw new ApiError(404, "You are not a root member of any family");
-
-//   // Determine which slot to fill for the target user
-//   let updateData = {};
-//   if (targetUser.gender.toLowerCase() === "male") {
-//     if (family.male_root_member) {
-//       throw new ApiError(400, "Male root member already exists and cannot be changed");
-//     }
-//     updateData.male_root_member = targetUser.user_id;
-//     updateData.ancestor = targetUser.parent_family || null; // ancestor logic
-//   } else if (targetUser.gender.toLowerCase() === "female") {
-//     if (family.female_root_member) {
-//       throw new ApiError(400, "Female root member already exists and cannot be changed");
-//     }
-//     updateData.female_root_member = targetUser.user_id;
-//   } else {
-//     throw new ApiError(400, "User gender must be male or female");
-//   }
-
-//   // Update family
-//   await family.update(updateData);
-
-//   // Create membership for target user
-//   await Membership.create({
-//     family_id: family.family_id,
-//     user_id: targetUser.user_id,
-//     role: "admin",
-//   });
-
-//   return res
-//     .status(200)
-//     .json(new ApiResponse(200, family, "Root member added successfully"));
-// });
-
+// ─── ADD ROOT MEMBER (sends acceptance invitation notification to user) ────────
 const addRootMember = asyncHandler(async (req, res) => {
-  const username = req.body.username; // Get username from request body
+  const username = req.body.username;
   if (!username) throw new ApiError(400, "username is required");
 
-  const transaction = await Family.sequelize.transaction();
+  // Get current user
+  const currentUser = await User.findByPk(Number(req.user.user_id));
+  if (!currentUser) throw new ApiError(404, "Current user not found");
 
-  try {
-    // Get current user
-    const currentUser = await User.findByPk(Number(req.user.user_id), { transaction });
-    if (!currentUser) throw new ApiError(404, "Current user not found");
+  // Get target user by username
+  const targetUser = await User.findOne({ where: { username: username } });
+  if (!targetUser) throw new ApiError(404, "Target user not found");
 
-    // Get target user by username
-    const targetUser = await User.findOne({ 
-      where: { username: username },
-      transaction 
-    });
-    if (!targetUser) throw new ApiError(404, "Target user not found");
-
-    // Prevent adding yourself as a root member
-    if (currentUser.user_id === targetUser.user_id) {
-      throw new ApiError(400, "You cannot add yourself as a root member");
-    }
-
-    // Check if target user is already a root member in another family
-    const existingRootFamily = await Family.findOne({
-      where: {
-        [Op.or]: [
-          { male_root_member: targetUser.user_id },
-          { female_root_member: targetUser.user_id },
-        ],
-      },
-      transaction
-    });
-    if (existingRootFamily) {
-      throw new ApiError(400, "This user is already a root member of another family");
-    }
-
-    // Fetch the family where current user is a root member
-    const family = await Family.findOne({
-      where: {
-        [Op.or]: [
-          { male_root_member: currentUser.user_id },
-          { female_root_member: currentUser.user_id },
-        ],
-      },
-      transaction
-    });
-    if (!family) throw new ApiError(404, "You are not a root member of any family");
-
-    // Determine which slot to fill based on target user's gender
-    let updateData = {};
-    if (targetUser.gender.toLowerCase() === "male") {
-      if (family.male_root_member) {
-        throw new ApiError(400, "Male root member already exists");
-      }
-      updateData.male_root_member = targetUser.user_id;
-      updateData.ancestor = targetUser.parent_family || null;
-    } else if (targetUser.gender.toLowerCase() === "female") {
-      if (family.female_root_member) {
-        throw new ApiError(400, "Female root member already exists");
-      }
-      updateData.female_root_member = targetUser.user_id;
-    } else {
-      throw new ApiError(400, "User gender must be male or female");
-    }
-
-    // Update family
-    await family.update(updateData, { transaction });
-
-    // Create membership for target user if not exists
-    const existingMembership = await Membership.findOne({
-      where: { family_id: family.family_id, user_id: targetUser.user_id },
-      transaction
-    });
-
-    if (!existingMembership) {
-      await Membership.create({
-        family_id: family.family_id,
-        user_id: targetUser.user_id,
-        role: "admin",
-      }, { transaction });
-    }
-
-    // Update target user's parent_family
-    await User.update(
-      { parent_family: family.family_id },
-      { where: { user_id: targetUser.user_id }, transaction }
-    );
-
-    await transaction.commit();
-
-    return res
-      .status(200)
-      .json(new ApiResponse(200, family, "Root member added successfully"));
-
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
+  if (currentUser.user_id === targetUser.user_id) {
+    throw new ApiError(400, "You cannot add yourself as a root member");
   }
+
+  // Check if target user is already a root member in another family
+  const existingRootFamily = await Family.findOne({
+    where: {
+      [Op.or]: [
+        { male_root_member: targetUser.user_id },
+        { female_root_member: targetUser.user_id },
+      ],
+    },
+  });
+  if (existingRootFamily) throw new ApiError(400, "This user is already a root member of another family");
+
+  // Fetch the family where current user is a root member
+  const family = await Family.findOne({
+    where: {
+      [Op.or]: [
+        { male_root_member: currentUser.user_id },
+        { female_root_member: currentUser.user_id },
+      ],
+    },
+  });
+  if (!family) throw new ApiError(404, "You are not a root member of any family");
+
+  // Validate the gender slot is available
+  if (targetUser.gender.toLowerCase() === "male") {
+    if (family.male_root_member) throw new ApiError(400, "Male root member already exists");
+  } else if (targetUser.gender.toLowerCase() === "female") {
+    if (family.female_root_member) throw new ApiError(400, "Female root member already exists");
+  } else {
+    throw new ApiError(400, "User gender must be male or female");
+  }
+
+  // Check for existing pending invitation
+  const existingInvitation = await Notification.findOne({
+    userId: targetUser.user_id,
+    type: "family_invitation",
+    "familyInvitation.familyId": String(family.family_id),
+    "familyInvitation.decision": "pending",
+  });
+  if (existingInvitation) throw new ApiError(400, "An invitation is already pending for this user");
+
+  // Create root member invitation notification
+  const notif = await Notification.create({
+    userId: targetUser.user_id,
+    type: "family_invitation",
+    title: `Root Member Invitation — ${family.family_name}`,
+    message: `${currentUser.fullname} has invited you to join the ${family.family_name} family as a root member (admin).`,
+    status: "unread",
+    familyInvitation: {
+      invitedBy: currentUser.user_id,
+      invitedByName: currentUser.fullname,
+      familyId: String(family.family_id),
+      familyName: family.family_name,
+      role: "admin",
+      decision: "pending",
+    },
+  });
+
+  await pushAndBadge(notif);
+
+  return res
+    .status(200)
+    .json(new ApiResponse(200, notif, `Root member invitation sent to ${targetUser.fullname}. They must accept to join.`));
 });
 
+// ─── RESPOND TO FAMILY INVITATION (member accepts/rejects) ───────────────────
+// Called by the invited user to accept or reject a family_invitation
+const respondToFamilyInvitation = asyncHandler(async (req, res) => {
+  const { notifId } = req.params;
+  const { decision } = req.body;
 
-// const updateFamily = asyncHandler(async (req, res) => {
-//   const family_id = Number(req.params.family_id); // family ID from route params
-//   const { family_name, marriage_date, description } = req.body;
+  const userId = Number(req.user.user_id);
+  const userName = req.user.fullname || "The user";
 
-//   // Fetch family
-//   const family = await Family.findByPk(family_id);
-//   if (!family) throw new ApiError(404, "Family not found");
-  
-//   // Check if the user is one of the root members
-//   const userId = Number(req.user.user_id);
-//   console.log("famly",typeof(family.female_root_member) ," ", typeof(family.male_root_member), " ",typeof(userId ))
-//   if (Number(family.male_root_member) !== userId && Number(family.female_root_member) !== userId) {
-//     throw new ApiError(403, "Only root members can update family details");
-//   }
+  if (!["accepted", "rejected"].includes(decision)) {
+    throw new ApiError(400, "decision must be 'accepted' or 'rejected'");
+  }
 
-//   // Update basic fields if provided
-//   if (family_name) family.family_name = family_name;
-//   if (marriage_date) family.marriage_date = marriage_date;
-//   if (description) family.description = description;
+  const invitationNotif = await Notification.findById(notifId);
 
-//   // Handle profile photo update
-//   if (req.file) {
-//     // Delete old photo from Cloudinary if exists
-//     if (family.familyPhoto) {
-//       await deleteImageOnCloudinary(family.familyPhoto);
-//     }
+  if (!invitationNotif || invitationNotif.type !== "family_invitation") {
+    throw new ApiError(404, "Invitation notification not found");
+  }
 
-//     // Upload new photo
-//     const uploadedPhoto = await uploadOnCloudinary(req.file.path, "image");
-//     family.familyPhoto = uploadedPhoto.secure_url;
-//   }
+  if (Number(invitationNotif.userId) !== userId) {
+    throw new ApiError(403, "This invitation is not for you");
+  }
 
-//   // Save updates
-//   await family.save();
+  if (invitationNotif.familyInvitation.decision !== "pending") {
+    throw new ApiError(
+      400,
+      "This invitation has already been responded to"
+    );
+  }
 
-//   return res
-//     .status(200)
-//     .json(new ApiResponse(200, family, "Family details updated successfully"));
-// });
+  const {
+    invitedBy,
+    invitedByName,
+    familyId,
+    familyName,
+    role,
+  } = invitationNotif.familyInvitation;
 
-// const removeMember = asyncHandler(async (req, res) => {
-// const family_id = Number(req.params.family_id);
-// const user_id = Number(req.body.user_id);
+  // ===================================================
+  // ACCEPT INVITATION
+  // ===================================================
+  if (decision === "accepted") {
+    const transaction = await sequelize.transaction();
 
-//   if (!family_id || !user_id) {
-//     throw new ApiError(400, "family_id and user_id are required");
-//   }
+    try {
+      const family = await Family.findByPk(Number(familyId), {
+        transaction,
+      });
 
-//   // Fetch family
-//   const family = await Family.findByPk(family_id);
-//   if (!family) throw new ApiError(404, "Family not found");
+      if (!family) {
+        throw new ApiError(404, "Family not found");
+      }
 
-//  console.log("f ",family)
+      const user = await User.findByPk(userId, {
+        transaction,
+      });
 
-//   // Check if target user is a root member
-//   if (Number(family.male_root_member) !== user_id && Number(family.female_root_member) !== user_id) {
-//     throw new ApiError(400, "Cannot remove a root member from the family");
-//   }
+      if (!user) {
+        throw new ApiError(404, "User not found");
+      }
 
-//   // Fetch membership
-//   const membership = await Membership.findOne({ where: { family_id, user_id } });
-//   if (!membership) {
-//     throw new ApiError(404, "User is not a member of this family");
-//   }
+      // ---------------------------------------------------
+      // ADMIN (ROOT MEMBER) INVITATION
+      // ---------------------------------------------------
+      if (role === "admin") {
+        // User cannot already be root member of another family
+        const alreadyRoot = await Family.findOne({
+          where: {
+            [Op.or]: [
+              { male_root_member: userId },
+              { female_root_member: userId },
+            ],
+            family_id: {
+              [Op.ne]: Number(familyId),
+            },
+          },
+          transaction,
+        });
 
-//   // Remove membership
-//   await membership.destroy();
+        if (alreadyRoot) {
+          throw new ApiError(
+            400,
+            `You are already a root member of "${alreadyRoot.family_name}". Please leave or delete that family before accepting this invitation.`
+          );
+        }
 
-//   // Update user's parent_family to null
-//   const user = await User.findByPk(user_id);
-//   if (user) {
-//     user.parent_family = null;
-//     await user.save();
-//   }
+        const updateData = {};
 
-//    if (user.gender === "male") {
-//       const otherFamily = await Family.findOne({
-//         where: { male_root_member: user_id },
-//       });
+        if (user.gender?.toLowerCase() === "male") {
+          if (family.male_root_member) {
+            throw new ApiError(
+              400,
+              "Male root slot is already occupied"
+            );
+          }
 
-//       if (otherFamily) {
-//         otherFamily.ancestor = null; // unlink the ancestor
-//         await otherFamily.save();
-//       }
-//     }
-  
+          updateData.male_root_member = userId;
+          updateData.ancestor = user.parent_family || null;
+        } else if (user.gender?.toLowerCase() === "female") {
+          if (family.female_root_member) {
+            throw new ApiError(
+              400,
+              "Female root slot is already occupied"
+            );
+          }
 
-//   return res
-//     .status(200)
-//     .json(new ApiResponse(200, {}, "Member removed successfully"));
-// });
+          updateData.female_root_member = userId;
+        } else {
+          throw new ApiError(
+            400,
+            "User gender must be male or female"
+          );
+        }
+
+        await family.update(updateData, { transaction });
+      }
+
+      // ---------------------------------------------------
+      // MEMBER INVITATION
+      // ---------------------------------------------------
+      if (role === "member") {
+        // User can belong to only one parent family
+        if (user.parent_family !== null) {
+          throw new ApiError(
+            400,
+            "You are already a member of another family. Please leave that family before accepting this invitation."
+          );
+        }
+      }
+
+      // ---------------------------------------------------
+      // CREATE MEMBERSHIP IF NOT ALREADY EXISTS
+      // ---------------------------------------------------
+      const existingMembership = await Membership.findOne({
+        where: {
+          family_id: Number(familyId),
+          user_id: userId,
+        },
+        transaction,
+      });
+
+      if (!existingMembership) {
+        await Membership.create(
+          {
+            family_id: Number(familyId),
+            user_id: userId,
+            role,
+          },
+          { transaction }
+        );
+      }
+
+      // ---------------------------------------------------
+      // ONLY MEMBER INVITATIONS UPDATE parent_family
+      // ---------------------------------------------------
+      if (role === "member") {
+        await User.update(
+          {
+            parent_family: Number(familyId),
+          },
+          {
+            where: {
+              user_id: userId,
+            },
+            transaction,
+          }
+        );
+
+        // If a male member joins his parent's family,
+        // connect any family where he is the male root.
+        if (user.gender?.toLowerCase() === "male") {
+          await Family.update(
+            {
+              ancestor: Number(familyId),
+            },
+            {
+              where: {
+                male_root_member: userId,
+                family_id: {
+                  [Op.ne]: Number(familyId),
+                },
+              },
+              transaction,
+            }
+          );
+        }
+      }
+
+      await transaction.commit();
+
+      // ---------------------------------------------------
+      // REMOVE OTHER PENDING INVITATIONS OF SAME ROLE
+      // ---------------------------------------------------
+      if (role === "member") {
+        await Notification.deleteMany({
+          userId,
+          type: "family_invitation",
+          "familyInvitation.role": "member",
+          "familyInvitation.decision": "pending",
+          _id: { $ne: invitationNotif._id },
+        });
+      }
+
+      if (role === "admin") {
+        await Notification.deleteMany({
+          userId,
+          type: "family_invitation",
+          "familyInvitation.role": "admin",
+          "familyInvitation.decision": "pending",
+          _id: { $ne: invitationNotif._id },
+        });
+      }
+
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  // ===================================================
+  // DELETE CURRENT INVITATION AND CREATE MESSAGE FOR INVITEE
+  // ===================================================
+  await invitationNotif.deleteOne();
+
+  const myResponseNotif = await Notification.create({
+    userId: userId,
+    type: "message",
+    title: decision === "accepted" ? "Invitation Accepted" : "Invitation Declined",
+    message: decision === "accepted" 
+        ? `You have accepted the invitation to join the ${familyName} family.` 
+        : `You have declined the invitation to join the ${familyName} family.`,
+    status: "unread",
+    meta: {
+      fromUserName: "System",
+      audienceName: familyName
+    }
+  });
+
+  await pushAndBadge(myResponseNotif);
+
+  // ===================================================
+  // NOTIFY THE INVITER
+  // ===================================================
+  const responseNotif = await Notification.create({
+    userId: invitedBy,
+    type: "family_invitation_response",
+    title:
+      decision === "accepted"
+        ? `✅ ${userName} joined ${familyName}`
+        : `❌ ${userName} declined your invitation`,
+    message:
+      decision === "accepted"
+        ? `${userName} accepted your invitation to join the ${familyName} family.`
+        : `${userName} declined your invitation to join the ${familyName} family.`,
+    status: "unread",
+    familyInvitation: {
+      invitedBy,
+      invitedByName,
+      familyId,
+      familyName,
+      role,
+      decision,
+      originalInvitationNotifId: String(invitationNotif._id),
+    },
+  });
+
+  await pushAndBadge(responseNotif);
+
+  emitToUser(invitedBy, "invitation_response_received", {
+    notifId: String(invitationNotif._id),
+    decision,
+    userName,
+  });
+
+  return res.status(200).json(
+    new ApiResponse(
+      200,
+      {
+        invitationNotif,
+        responseNotif,
+      },
+      `Invitation ${decision}`
+    )
+  );
+});
+
 
 const updateFamily = asyncHandler(async (req, res) => {
   const family_id = Number(req.params.family_id);
   const { family_name, marriage_date, description } = req.body;
 
-  if (!family_id || isNaN(family_id)) {
-    throw new ApiError(400, "Valid family ID is required");
-  }
+  if (!family_id || isNaN(family_id)) throw new ApiError(400, "Valid family ID is required");
 
   const family = await Family.findByPk(family_id);
   if (!family) throw new ApiError(404, "Family not found");
@@ -712,7 +629,6 @@ const updateFamily = asyncHandler(async (req, res) => {
 
   try {
     const updateData = {};
-
     if (family_name?.trim()) updateData.family_name = family_name.trim();
     if (marriage_date) {
       const date = new Date(marriage_date);
@@ -725,7 +641,6 @@ const updateFamily = asyncHandler(async (req, res) => {
       if (family.familyPhoto && !family.familyPhoto.includes("default-family-image")) {
         await deleteImageOnCloudinary(family.familyPhoto);
       }
-
       const uploadedPhoto = await uploadOnCloudinary(req.file.path, "image");
       if (!uploadedPhoto) throw new ApiError(500, "Failed to upload family photo");
       updateData.familyPhoto = uploadedPhoto.secure_url;
@@ -735,145 +650,57 @@ const updateFamily = asyncHandler(async (req, res) => {
     await family.reload({ transaction });
     await transaction.commit();
 
-    return res.status(200)
-      .json(new ApiResponse(200, family, "Family details updated successfully"));
-
+    return res.status(200).json(new ApiResponse(200, family, "Family details updated successfully"));
   } catch (error) {
     await transaction.rollback();
     throw error;
   }
 });
 
-
-// const removeMember = asyncHandler(async (req, res) => {
-//   const family_id = Number(req.params.family_id);
-//   const user_id = Number(req.body.user_id); // the member to be removed
-//   const current_user_id = Number(req.user.user_id); // the user performing the action
-
-//   if (!family_id || !user_id) {
-//     throw new ApiError(400, "family_id and user_id are required");
-//   }
-
-//   // Fetch family
-//   const family = await Family.findByPk(family_id);
-//   if (!family) throw new ApiError(404, "Family not found");
-
-//   // Check if current user is a root member of this family
-//   const isRoot =
-//     Number(family.male_root_member) === current_user_id ||
-//     Number(family.female_root_member) === current_user_id;
-
-//   if (!isRoot) {
-//     throw new ApiError(403, "Only root members can remove members from the family");
-//   }
-
-//   // Prevent removing another root member
-//   const isTargetRoot =
-//     Number(family.male_root_member) === user_id ||
-//     Number(family.female_root_member) === user_id;
-
-//   if (isTargetRoot) {
-//     throw new ApiError(400, "Cannot remove a root member from the family");
-//   }
-
-//   // Fetch membership
-//   const membership = await Membership.findOne({ where: { family_id, user_id } });
-//   if (!membership) {
-//     throw new ApiError(404, "User is not a member of this family");
-//   }
-
-//   // Remove membership
-//   await membership.destroy();
-
-//   // Update user's parent_family to null
-//   const user = await User.findByPk(user_id);
-//   if (user) {
-//     user.parent_family = null;
-//     await user.save();
-//   }
-
-//   // Clean up ancestor if needed (male users who are root in another family)
-//   if (user?.gender === "male") {
-//     const otherFamily = await Family.findOne({
-//       where: { male_root_member: user_id },
-//     });
-
-//     if (otherFamily) {
-//       otherFamily.ancestor = null; // unlink the ancestor
-//       await otherFamily.save();
-//     }
-//   }
-
-//   return res
-//     .status(200)
-//     .json(new ApiResponse(200, {}, "Member removed successfully"));
-// });
-
 const removeMember = asyncHandler(async (req, res) => {
   const family_id = Number(req.params.family_id);
   const user_id = Number(req.query.user_id);
   const current_user_id = Number(req.user.user_id);
 
-  if (!family_id || !user_id) {
-    throw new ApiError(400, "family_id and user_id are required");
-  }
+  if (!family_id || !user_id) throw new ApiError(400, "family_id and user_id are required");
 
   const transaction = await Family.sequelize.transaction();
 
   try {
-    // Fetch family
     const family = await Family.findByPk(family_id, { transaction });
     if (!family) throw new ApiError(404, "Family not found");
 
-    // Check if current user is a root member
     if (!isRootMember(family, current_user_id)) {
       throw new ApiError(403, "Only root members can remove members from the family");
     }
 
-    // Prevent removing root members
     if (isRootMember(family, user_id)) {
       throw new ApiError(400, "Cannot remove a root member from the family");
     }
 
-    // Fetch membership
-    const membership = await Membership.findOne({ 
-      where: { family_id, user_id },
-      transaction
-    });
-    if (!membership) {
-      throw new ApiError(404, "User is not a member of this family");
-    }
+    const membership = await Membership.findOne({ where: { family_id, user_id }, transaction });
+    if (!membership) throw new ApiError(404, "User is not a member of this family");
 
-    // Remove membership
     await membership.destroy({ transaction });
 
-    // Update user's parent_family to null
-    await User.update(
-      { parent_family: null },
-      { where: { user_id }, transaction }
-    );
+    await User.update({ parent_family: null }, { where: { user_id }, transaction });
 
-    // Clean up ancestor if needed (male users who are root in another family)
     const user = await User.findByPk(user_id, { transaction });
     if (user?.gender?.toLowerCase() === "male") {
       await Family.update(
         { ancestor: null },
-        { 
-          where: { 
+        {
+          where: {
             male_root_member: user_id,
-            family_id: { [Op.ne]: family_id }
+            ancestor: family_id,
           },
-          transaction 
+          transaction,
         }
       );
     }
 
     await transaction.commit();
-
-    return res
-      .status(200)
-      .json(new ApiResponse(200, {}, "Member removed successfully"));
-
+    return res.status(200).json(new ApiResponse(200, {}, "Member removed successfully"));
   } catch (error) {
     await transaction.rollback();
     throw error;
@@ -884,184 +711,189 @@ const leaveMember = asyncHandler(async (req, res) => {
   const family_id = Number(req.params.family_id);
   const user_id = Number(req.user.user_id);
 
-  if (!family_id || !user_id) {
-    throw new ApiError(400, "family_id and user_id are required");
-  }
-
   const t = await sequelize.transaction();
 
   try {
-    // Fetch family
     const family = await Family.findByPk(family_id, { transaction: t });
     if (!family) throw new ApiError(404, "Family not found");
 
-    // Prevent root member from leaving
-    if (
-      Number(family.male_root_member) === user_id ||
-      Number(family.female_root_member) === user_id
-    ) {
-      throw new ApiError(400, "Cannot remove a root member from the family");
+    if (Number(family.male_root_member) === user_id || Number(family.female_root_member) === user_id) {
+      throw new ApiError(400, "Root members cannot leave the family. Transfer root status first.");
     }
 
-    // Fetch membership
-    const membership = await Membership.findOne({
-      where: { family_id, user_id },
-      transaction: t,
-    });
+    const membership = await Membership.findOne({ where: { family_id, user_id }, transaction: t });
     if (!membership) throw new ApiError(404, "User is not a member of this family");
 
-    // Remove membership
     await membership.destroy({ transaction: t });
 
-    // Update user's parent_family
     const user = await User.findByPk(user_id, { transaction: t });
     if (user) {
       user.parent_family = null;
       await user.save({ transaction: t });
-
-      // If male root of another family → clear ancestor links
       if (user.gender?.toLowerCase() === "male") {
         await Family.update(
           { ancestor: null },
-          { where: { male_root_member: user_id }, transaction: t }
+          {
+            where: {
+              male_root_member: user_id,
+              ancestor: family_id,
+            },
+            transaction: t,
+          }
         );
       }
     }
 
     await t.commit();
-    return res.status(200).json(new ApiResponse(200, {}, "Member removed successfully"));
+    return res.status(200).json(new ApiResponse(200, {}, "Left family successfully"));
   } catch (error) {
     await t.rollback();
     throw error;
   }
 });
 
-
 const deleteFamily = asyncHandler(async (req, res) => {
   const family_id = Number(req.params.family_id);
-  if (!family_id) throw new ApiError(400, "family_id is required");
 
+  if (!family_id) {
+    throw new ApiError(400, "family_id is required");
+  }
+
+  // Check if family exists
   const family = await Family.findByPk(family_id);
-  if (!family) throw new ApiError(404, "Family not found");
+  if (!family) {
+    throw new ApiError(404, "Family not found");
+  }
 
+  // Only root members can delete
   const currentUserId = Number(req.user.user_id);
   if (
     Number(family.male_root_member) !== currentUserId &&
     Number(family.female_root_member) !== currentUserId
   ) {
-    throw new ApiError(403, "Only root members can delete this family");
+    throw new ApiError(
+      403,
+      "Only root members can delete this family"
+    );
   }
 
-  const t = await sequelize.transaction();
+  const transaction = await sequelize.transaction();
 
   try {
-    // Recursive cleanup of descendants
-    const clearDescendants = async (fid) => {
-      const descendants = await Family.findAll({ where: { ancestor: fid }, transaction: t });
-      for (const desc of descendants) {
-        await clearDescendants(desc.family_id);
-        desc.ancestor = null;
-        await desc.save({ transaction: t });
+    // 1. Detach only direct child families.
+    // Their own descendants remain attached to them.
+    await Family.update(
+      { ancestor: null },
+      {
+        where: { ancestor: family_id },
+        transaction,
       }
-    };
-    await clearDescendants(family_id);
-
-    // Remove memberships
-    await Membership.destroy({ where: { family_id }, transaction: t });
-
-    // Clear users' parent_family
-    await User.update(
-      { parent_family: null },
-      { where: { parent_family: family_id }, transaction: t }
     );
 
-    // Delete the family itself
-    await family.destroy({ transaction: t });
+    // 2. Remove all memberships belonging to this family
+    await Membership.destroy({
+      where: { family_id },
+      transaction,
+    });
 
-    await t.commit();
-    return res.status(200).json(new ApiResponse(200, {}, "Family deleted successfully"));
+    // 3. Users who belonged to this family
+    // no longer have a parent family.
+    await User.update(
+      { parent_family: null },
+      {
+        where: { parent_family: family_id },
+        transaction,
+      }
+    );
+
+    // 4. Delete the family record
+    await family.destroy({ transaction });
+
+    await transaction.commit();
+
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {},
+        "Family deleted successfully"
+      )
+    );
   } catch (error) {
-    await t.rollback();
+    await transaction.rollback();
     throw error;
   }
 });
 
-
+// ─── JOIN FAMILY VIA CODE (sends join request to root member) ─────────────────
 const joinFamily = asyncHandler(async (req, res) => {
   const { invitation_code } = req.body;
   const user_id = Number(req.user.user_id);
 
-  if (!invitation_code) {
-    throw new ApiError(400, "Invitation code is required");
-  }
+  if (!invitation_code) throw new ApiError(400, "Invitation code is required");
 
-  // Check if family exists
   const family = await Family.findOne({ where: { invitation_code } });
   if (!family) throw new ApiError(404, "Invalid invitation code or family not found");
 
-  console.log("deep       ",family)
-  // Check if user exists
   const user = await User.findByPk(user_id);
   if (!user) throw new ApiError(404, "User not found");
 
+  if (family.male_root_member === user.user_id || family.female_root_member === user.user_id) {
+    throw new ApiError(400, "You are already a root member of this family");
+  }
 
-   if (
-      family.male_root_member === user.user_id ||
-      family.female_root_member === user.user_id
-    ) {
-      throw new ApiError(400, "You cannot join your own created family");
-    }
-
-
-  // Check if user already belongs to another family
-  console.log(user.parent_family , " " , typeof(user.parent_family))
-  console.log(user)
   if (user.parent_family !== null) {
-    throw new ApiError(400, "You already belong to another family and cannot join");
+    throw new ApiError(400, "You already belong to a family and cannot join another");
   }
 
-  // Check if user is already a member of this family
-  const existingMembership = await Membership.findOne({
-    where: { family_id: family.family_id, user_id },
+  const existingMembership = await Membership.findOne({ where: { family_id: family.family_id, user_id } });
+  if (existingMembership) throw new ApiError(400, "You are already a member of this family");
+
+  // Check for existing pending join request
+  const existingRequest = await Notification.findOne({
+    type: "join_request",
+    "joinRequest.requesterId": user_id,
+    "joinRequest.targetId": String(family.family_id),
+    "joinRequest.targetType": "family",
+    "joinRequest.decision": "pending",
   });
-  if (existingMembership) {
-    throw new ApiError(400, "You are already a member of this family");
-  }
+  if (existingRequest) throw new ApiError(400, "A join request is already pending for this family");
 
-  // Create membership
-  const membership = await Membership.create({
-    family_id: family.family_id,
-    user_id,
-    role: "member",
+  // Determine who to notify — prefer male root, fallback to female root, fallback to created_by
+  const rootAdminId = Number(family.male_root_member) || Number(family.female_root_member) || Number(family.created_by);
+  const requesterName = user.fullname || user.username;
+
+  const notif = await Notification.create({
+    userId: rootAdminId,
+    type: "join_request",
+    title: `Join Request — ${family.family_name}`,
+    message: `${requesterName} wants to join your family "${family.family_name}" using the invitation code.`,
+    status: "unread",
+    joinRequest: {
+      requesterId: user_id,
+      requesterName,
+      targetType: "family",
+      targetId: String(family.family_id),
+      targetName: family.family_name,
+      decision: "pending",
+    },
   });
 
-  // Update user's parent_family
-  user.parent_family = family.family_id;
-  await user.save();
+  await pushAndBadge(notif);
 
-  // If user is male → update ancestor of other families where he is root
-  if (user.gender.toLowerCase() === "male") {
-    const maleRootFamilies = await Family.findAll({
-      where: { male_root_member: user.user_id },
-    });
-
-    for (const f of maleRootFamilies) {
-      f.ancestor = family.family_id;
-      await f.save();
-    }
-  }
-
-  return res.status(200).json(
-    new ApiResponse(
-      200,
-      { family, membership },
-      "Joined family successfully"
-    )
-  );
+  return res.status(200).json(new ApiResponse(200, notif, "Join request sent to the family admin. Please wait for approval."));
 });
 
-
-
-export { createFamily , getFamily , addMember , addRootMember , updateFamily , removeMember , deleteFamily , generateInvitationCode,leaveMember ,joinFamily};
-
-
+export {
+  createFamily,
+  getFamily,
+  addMember,
+  addRootMember,
+  respondToFamilyInvitation,
+  updateFamily,
+  removeMember,
+  deleteFamily,
+  generateInvitationCode,
+  leaveMember,
+  joinFamily,
+  getMyFamilies,
+};

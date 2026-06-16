@@ -6,7 +6,6 @@ const api = axios.create({
   withCredentials: true,
 });
 
-console.log(import.meta.env.VITE_SERVER)
 api.interceptors.request.use((config) => {
   const auth = getAuthData();
   if (auth?.accessToken) {
@@ -22,19 +21,24 @@ api.interceptors.response.use(
     if (err.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;
       try {
-        const auth = getAuthData();
         const res = await axios.post(
           `${import.meta.env.VITE_SERVER}/user/refresh-token`,
           {},
           { withCredentials: true }
         );
 
-
-
         const { user, accessToken, refreshToken } = res.data.data;
         saveAuthData({ user, accessToken, refreshToken });
 
         originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+
+        // ✅ Tell the socket to reconnect with the new token
+        // We dispatch a storage event so socketContext picks it up automatically.
+        // (storage events from the same tab don't fire natively, so we dispatch manually)
+        window.dispatchEvent(
+          new StorageEvent("storage", { key: "auth" })
+        );
+
         return api(originalRequest);
       } catch {
         clearAuthData();

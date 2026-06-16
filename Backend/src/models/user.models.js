@@ -55,7 +55,7 @@ export class User extends Model {
     return jwt.sign(
       { user_id: this.user_id, email: this.email, phone_no: this.phone_no },
       process.env.ACCESS_TOKEN_SECRET,
-      { expiresIn: "15m" }
+      { expiresIn: process.env.ACCESS_TOKEN_EXPIRY || "1d" }
     );
   }
 
