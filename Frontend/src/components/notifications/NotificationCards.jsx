@@ -1,106 +1,393 @@
+// src/components/notifications/NotificationCards.jsx
+// Production-level notification card component.
+// Handles: message, join_request, join_response, family_invitation, family_invitation_response
 
-
-import React from "react";
+import { useState, useEffect, useRef } from "react";
+import {
+  Trash2,
+  Clock,
+  CheckCircle,
+  XCircle,
+  UserPlus,
+  MessageSquare,
+  Crown,
+  Eye,
+} from "lucide-react";
 import api from "../../utils/axios";
-import { Trash2, User, Clock, Tag } from "lucide-react";
+import { toast } from "react-toastify";
+import { useNotifications } from "../../utils/notificationContext";
 
-export default function NotificationCard({ notification, onDelete, auth }) {
-  const userId = parseInt(auth?.user?.user_id);
+export default function NotificationCard({ notification, auth }) {
+  const { updateNotification, deleteNotification, markAsRead, deleteNotificationFromDb } = useNotifications();
+  const userId = Number(auth?.user?.user_id);
   const isSender = notification.meta?.fromUserId === userId;
 
-  const handleDelete = async () => {
-    // Confirmation before deleting
-    const confirmed = window.confirm("Are you sure you want to delete this notification?");
-    if (!confirmed) return;
+  // Track the decision state locally so UI updates immediately on accept/decline
+  const [decision, setDecision] = useState(
+    notification.joinRequest?.decision ||
+    notification.familyInvitation?.decision ||
+    "pending"
+  );
+  const [responding, setResponding] = useState(false);
 
+  // Sync decision state if notification prop changes (e.g. from socket update)
+  useEffect(() => {
+    const newDecision =
+      notification.joinRequest?.decision ||
+      notification.familyInvitation?.decision ||
+      "pending";
+    setDecision(newDecision);
+  }, [notification.joinRequest?.decision, notification.familyInvitation?.decision]);
+
+  const formattedDate = new Date(notification.createdAt).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const isUnread = notification.status === "unread";
+  const isPending = decision === "pending";
+  const isAccepted = decision === "accepted";
+
+  const cardRef = useRef(null);
+
+  // ── Handlers ─────────────────────────────────────────────────────────────
+
+  // (moved handleMarkRead to its original place below)
+
+  const handleJoinResponse = async (dec) => {
+    setResponding(true);
     try {
-      await api.delete(`/notification/${notification._id}`);
-      if (onDelete) onDelete(notification._id); // remove from frontend state
+      await api.patch(`/notification/join-request/${notification._id}/respond`, {
+        decision: dec,
+      });
+      setDecision(dec);
+      // Sync context state so the card shows the updated decision
+      updateNotification(notification._id, {
+        joinRequest: { ...notification.joinRequest, decision: dec },
+        status: "read",
+      });
+      toast.success(dec === "accepted" ? "✅ User added!" : "Request rejected");
     } catch (err) {
-      console.error("Failed to delete notification:", err.response?.data?.message || "Error deleting notification.");
+      toast.error(err.response?.data?.message || "Failed to respond");
+    } finally {
+      setResponding(false);
     }
   };
 
-  const formattedDate = new Date(notification.createdAt).toLocaleString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-
-  const typeColor = {
-    general: 'bg-indigo-500',
-    birthday: 'bg-pink-500',
-    anniversary: 'bg-green-500',
-  }[notification.type] || 'bg-gray-500';
-
-
-  
-  let senderName = notification.user?.fullname;
-  let messageText = notification.message || "";
-
-  if (!senderName && messageText) {
-    const match = messageText.match(/^(.+?)\s+says:\s*/);
-    if (match && match[1]) {
-      senderName = match[1];
-      messageText = messageText.replace(/^(.+?)\s+says:\s*/, ""); // remove "Name says: " from message
+  const handleInvitationResponse = async (dec) => {
+    setResponding(true);
+    try {
+      await api.patch(`/family/invitation/${notification._id}/respond`, {
+        decision: dec,
+      });
+      setDecision(dec);
+      // Remove the old invitation card, as the backend will send a new message notification via socket
+      deleteNotification(notification._id);
+      toast.success(
+        dec === "accepted" ? "✅ You've joined the family!" : "Invitation declined"
+      );
+    } catch (err) {
+      toast.error(err.response?.data?.message || "Failed to respond");
+    } finally {
+      setResponding(false);
     }
+  };
+
+  const handleMarkRead = async () => {
+    if (isUnread) {
+      await markAsRead(notification._id);
+    }
+  };
+
+  // ── Auto mark as read on scroll ──────────────────────────────────────────
+  useEffect(() => {
+    if (!isUnread) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          handleMarkRead();
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.5 }
+    );
+
+    if (cardRef.current) observer.observe(cardRef.current);
+
+    return () => observer.disconnect();
+  }, [isUnread, notification._id]);
+
+  const handleDelete = async () => {
+    if (!window.confirm("Delete this notification?")) return;
+    await deleteNotificationFromDb(notification._id, notification.meta?.groupNotificationId);
+  };
+
+  // ── Shared UI pieces ─────────────────────────────────────────────────────
+
+  const borderColor = isUnread ? "border-indigo-400" : "border-gray-200";
+
+  const ActionFooter = ({ showDelete = true }) => (
+    <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+      <div className="flex items-center gap-2">
+        {isUnread && (
+          <button
+            onClick={handleMarkRead}
+            className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-colors"
+            title="Mark as read"
+          >
+            <Eye size={12} />
+            Mark read
+          </button>
+        )}
+        {showDelete && (
+          <button
+            onClick={handleDelete}
+            className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full bg-red-50 text-red-500 hover:bg-red-100 transition-colors"
+            title="Delete notification"
+          >
+            <Trash2 size={12} />
+            Delete
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-gray-400 flex items-center gap-1">
+        <Clock size={11} /> {formattedDate}
+      </p>
+    </div>
+  );
+
+  const DecisionBadge = ({ acceptText, rejectText }) => (
+    <div
+      className={`flex items-center gap-1.5 text-sm font-semibold ${isAccepted ? "text-green-600" : "text-red-500"
+        }`}
+    >
+      {isAccepted ? <CheckCircle size={15} /> : <XCircle size={15} />}
+      {isAccepted ? acceptText : rejectText}
+    </div>
+  );
+
+  const UnreadDot = () =>
+    isUnread ? <span className="ml-auto w-2 h-2 rounded-full bg-indigo-500 shrink-0" /> : null;
+
+  // ── TYPE: join_request ───────────────────────────────────────────────────
+  if (notification.type === "join_request") {
+    const { requesterName, targetName, targetType } = notification.joinRequest || {};
+    return (
+      <div
+        ref={cardRef}
+        className={`bg-white rounded-2xl p-5 mb-4 shadow-sm border border-gray-100 border-l-4 ${borderColor}`}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <span className="p-1.5 bg-amber-100 rounded-full">
+            <UserPlus size={15} className="text-amber-600" />
+          </span>
+          <span className="text-xs font-bold uppercase tracking-wide text-amber-600">
+            Join Request · {targetType === "family" ? "Family" : "Group"}
+          </span>
+          <UnreadDot />
+        </div>
+
+        <h3 className="text-base font-bold text-gray-900 mb-1">{notification.title}</h3>
+        <p className="text-gray-600 text-sm mb-4">{notification.message}</p>
+
+        {isPending ? (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleJoinResponse("accepted")}
+              disabled={responding}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+            >
+              <CheckCircle size={15} /> Accept
+            </button>
+            <button
+              onClick={() => handleJoinResponse("rejected")}
+              disabled={responding}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+            >
+              <XCircle size={15} /> Reject
+            </button>
+          </div>
+        ) : (
+          <DecisionBadge
+            acceptText="You accepted this request"
+            rejectText="You rejected this request"
+          />
+        )}
+
+        <ActionFooter />
+      </div>
+    );
   }
 
-  senderName = senderName || "System";
-  
-  const toReceiverAddress = auth?.user?.fullname || "You (Current User)"; 
-  console.log(toReceiverAddress , " " , auth?.user ,  " ", senderName)
+  // ── TYPE: join_response ──────────────────────────────────────────────────
+  if (notification.type === "join_response") {
+    const accepted = notification.joinRequest?.decision === "accepted";
+    return (
+      <div
+        ref={cardRef}
+        className={`bg-white rounded-2xl p-5 mb-4 shadow-sm border border-gray-100 border-l-4 ${accepted ? "border-green-400" : "border-red-400"
+          }`}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <span className={`p-1.5 rounded-full ${accepted ? "bg-green-100" : "bg-red-100"}`}>
+            {accepted ? (
+              <CheckCircle size={15} className="text-green-600" />
+            ) : (
+              <XCircle size={15} className="text-red-500" />
+            )}
+          </span>
+          <span
+            className={`text-xs font-bold uppercase tracking-wide ${accepted ? "text-green-600" : "text-red-500"
+              }`}
+          >
+            {accepted ? "Request Accepted" : "Request Declined"}
+          </span>
+          <UnreadDot />
+        </div>
+        <h3 className="text-base font-bold text-gray-900 mb-1">{notification.title}</h3>
+        <p className="text-gray-600 text-sm">{notification.message}</p>
+        <ActionFooter />
+      </div>
+    );
+  }
+
+  // ── TYPE: family_invitation ──────────────────────────────────────────────
+  if (notification.type === "family_invitation") {
+    const { invitedByName, familyName, role } = notification.familyInvitation || {};
+    const isRootRole = role === "admin";
+    return (
+      <div
+        ref={cardRef}
+        className={`bg-white rounded-2xl p-5 mb-4 shadow-sm border border-gray-100 border-l-4 ${borderColor}`}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <span className={`p-1.5 rounded-full ${isRootRole ? "bg-amber-100" : "bg-purple-100"}`}>
+            {isRootRole ? (
+              <Crown size={15} className="text-amber-600" />
+            ) : (
+              <UserPlus size={15} className="text-purple-600" />
+            )}
+          </span>
+          <span
+            className={`text-xs font-bold uppercase tracking-wide ${isRootRole ? "text-amber-600" : "text-purple-600"
+              }`}
+          >
+            {isRootRole ? "Root Member Invitation" : "Family Invitation"}
+          </span>
+          <UnreadDot />
+        </div>
+
+        <h3 className="text-base font-bold text-gray-900 mb-1">{notification.title}</h3>
+        <p className="text-gray-600 text-sm mb-4">{notification.message}</p>
+
+        {isPending ? (
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleInvitationResponse("accepted")}
+              disabled={responding}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-green-600 hover:bg-green-700 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+            >
+              <CheckCircle size={15} /> Accept
+            </button>
+            <button
+              onClick={() => handleInvitationResponse("rejected")}
+              disabled={responding}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-colors disabled:opacity-50"
+            >
+              <XCircle size={15} /> Decline
+            </button>
+          </div>
+        ) : (
+          <DecisionBadge
+            acceptText="You accepted — welcome to the family!"
+            rejectText="You declined this invitation"
+          />
+        )}
+
+        <ActionFooter />
+      </div>
+    );
+  }
+
+  // ── TYPE: family_invitation_response ─────────────────────────────────────
+  if (notification.type === "family_invitation_response") {
+    const accepted = notification.familyInvitation?.decision === "accepted";
+    return (
+      <div
+        ref={cardRef}
+        className={`bg-white rounded-2xl p-5 mb-4 shadow-sm border border-gray-100 border-l-4 ${accepted ? "border-green-400" : "border-red-400"
+          }`}
+      >
+        <div className="flex items-center gap-2 mb-3">
+          <span className={`p-1.5 rounded-full ${accepted ? "bg-green-100" : "bg-red-100"}`}>
+            {accepted ? (
+              <CheckCircle size={15} className="text-green-600" />
+            ) : (
+              <XCircle size={15} className="text-red-500" />
+            )}
+          </span>
+          <span
+            className={`text-xs font-bold uppercase tracking-wide ${accepted ? "text-green-600" : "text-red-500"
+              }`}
+          >
+            Invitation {accepted ? "Accepted" : "Declined"}
+          </span>
+          <UnreadDot />
+        </div>
+        <h3 className="text-base font-bold text-gray-900 mb-1">{notification.title}</h3>
+        <p className="text-gray-600 text-sm">{notification.message}</p>
+        <ActionFooter />
+      </div>
+    );
+  }
+
+  // ── TYPE: message (and any other/legacy types) ──────────────────────────
+  const senderName =
+    notification.senderName || notification.meta?.fromUserName || "System";
+  const audienceName = notification.meta?.audienceName;
+
   return (
     <div
-      className={`bg-white rounded-2xl p-5 mb-5 shadow-lg hover:shadow-xl transform hover:scale-[1.01] transition duration-300 ease-in-out border-l-4 ${
-        notification.status === "unread" ? "border-blue-500" : "border-gray-200"
-      }`}
-      style={{ fontFamily: "'Inter', sans-serif" }}
+      ref={cardRef}
+      className={`relative p-5 rounded-2xl bg-white border shadow-sm transition-all hover:shadow-md ${borderColor}`}
     >
-      <div className="flex items-center justify-between mb-3 border-b pb-2">
-        <span
-          className={`px-3 py-1 text-xs font-bold uppercase tracking-wider text-white rounded-full ${typeColor} shadow-md`}
-        >
-          <Tag size={12} className="inline mr-1 -mt-0.5" />
-          {notification.type}
-        </span>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="p-1.5 bg-indigo-100 rounded-full">
+            <MessageSquare size={15} className="text-indigo-600" />
+          </span>
+          <span className="text-xs font-bold uppercase tracking-wide text-indigo-500">
+            Message
+            {audienceName && (
+              <span className="ml-1.5 font-normal text-gray-400 normal-case">
+                → {audienceName}
+              </span>
+            )}
+          </span>
+          <UnreadDot />
+        </div>
         {isSender && (
           <button
             onClick={handleDelete}
-            title="Delete Notification"
-            className="text-red-400 hover:text-red-600 transition duration-150 p-1 rounded-full hover:bg-red-100"
+            className="text-gray-300 hover:text-red-500 transition-colors p-1 rounded-full hover:bg-red-50"
+            title="Delete for everyone"
           >
-            <Trash2 size={18} />
+            <Trash2 size={15} />
           </button>
         )}
       </div>
 
-      <h3 className="text-2xl font-extrabold text-gray-900 mb-2 leading-snug">
-        {notification.title}
-      </h3>
+      <h3 className="text-base font-bold text-gray-900 mb-1">{notification.title}</h3>
+      <p className="text-sm text-gray-500 font-medium mb-0.5">{senderName}:</p>
+      <p className="text-gray-700 text-sm italic leading-relaxed">
+        "{notification.message}"
+      </p>
 
-      <div className="text-gray-700 text-base mb-3 font-medium">
-        <span className="font-semibold text-gray-800 flex items-center mb-1 text-lg">
-          <User size={16} className="mr-2 text-indigo-500 " />
-          { senderName }:
-        </span>
-        <p className="pl-6 text-gray-700 font-serif italic text-lg leading-relaxed">
-          "{notification.message}"
-        </p>
-      </div>
-
-      <div className="text-sm text-gray-500 mb-3 border-t pt-3">
-        <span className="font-medium text-indigo-600">
-          To Address: {toReceiverAddress}
-        </span>
-      </div>
-
-      <div className="flex items-center text-xs text-gray-500 mt-2">
-        <Clock size={12} className="mr-1" />
-        <time dateTime={notification.createdAt}>{formattedDate}</time>
-      </div>
+      <ActionFooter showDelete={!isSender} />
     </div>
   );
 }

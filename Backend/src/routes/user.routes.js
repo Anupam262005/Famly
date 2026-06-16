@@ -11,7 +11,10 @@ import {
   getUserProfile,
   loginWithGoogle,
   logout,
-  getUserFamilies
+  getUserFamilies,
+  sendSignupOTP,
+  verifySignupOTP,
+  resendSignupOTP,
 } from "../controllers/user.controller.js";
 
 import { upload } from "../middlewares/multer.middleware.js";
@@ -19,7 +22,21 @@ import { verifyJWT } from "../middlewares/auth.middleware.js";
 
 const router = express.Router();
 
+router.post(
+  "/send-signup-otp",
+  upload.single("profilePhoto"),
+  sendSignupOTP
+);
 
+router.post(
+  "/verify-signup-otp",
+  verifySignupOTP
+);
+
+router.post(
+  "/resend-signup-otp",
+  resendSignupOTP
+);
 
 // Register user
 router.post("/register", upload.single("profilePhoto"), registerUser);
@@ -58,6 +75,6 @@ router.put(
 // Get another user’s profile by ID
 router.get("/:userId/profile", getUserProfile);
 
-router.get("/get-families",verifyJWT,getUserFamilies);
+router.get("/get-families", verifyJWT, getUserFamilies);
 
 export default router;  

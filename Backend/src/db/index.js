@@ -35,6 +35,7 @@
 import mongoose from "mongoose";
 import { Sequelize } from "sequelize";
 
+
 export const connectMongo = async () => {
   try {
     await mongoose.connect(`${process.env.MONGODB_URI}/${process.env.DB_NAME}`);

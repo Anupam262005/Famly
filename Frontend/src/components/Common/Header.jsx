@@ -5,7 +5,7 @@ import { useAuth } from "../../utils/authContext";
 import { useTheme } from "../../utils/ThemeContext";
 import famlyLogo from "../../assets/famly-logo.png";
 import { Sun, Moon, Menu, X, LogOut } from "lucide-react";
-import NotificationsPage from "../../pages/notifications/NotificationPage";
+import NotificationBell from "./NotificationBell";
 import { Bell } from "lucide-react";
 import About from "../../pages/About/About";
 import Home from "../../pages/Home/HomePage";
@@ -30,10 +30,10 @@ const Header = () => {
     <header className={`sticky top-0 z-50 backdrop-blur-lg transition-all duration-300 
       ${theme === "dark" ? "bg-gray-900/90 border-b border-gray-700 shadow-md"
         : "bg-white/80 border-b border-gray-200 shadow-md"}`}>
-      
+
       {/* Container - Switched to a flex layout with space-between on mobile/logo, then a sophisticated split for desktop */}
       <div className="max-w-7xl mx-auto flex items-center justify-between px-6 py-3">
-        
+
         {/* Logo/Left Side - Must be first for mobile ordering */}
         <Link to="/" className="flex items-center gap-2 flex-shrink-0">
           <img
@@ -65,7 +65,7 @@ const Header = () => {
                 </Link>
               );
             })}
-            
+
             {user && (
               /* Private Group Link (Desktop) - Placed with other centered links */
               <Link
@@ -110,13 +110,7 @@ const Header = () => {
               >
                 <LogOut size={18} /> Logout
               </button>
-              <button
-                onClick={() => navigate("/notifications")} // ✅ navigate to page
-                className={`flex items-center gap-1 font-medium transition-colors
-    ${theme === "dark" ? "text-purple-300 hover:text-purple-200" : "text-purple-700 hover:text-purple-500"}`}
-              >
-                <Bell size={18} /> Notifications
-              </button>
+              <NotificationBell />
 
             </div>
           )}
@@ -158,7 +152,7 @@ const Header = () => {
               {page}
             </Link>
           ))}
-          
+
           {user && (
             /* Private Group Button (Mobile) - Visible when logged in */
             <Link

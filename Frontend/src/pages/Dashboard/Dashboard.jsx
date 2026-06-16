@@ -23,7 +23,7 @@
 //     { name: "Search", icon: <Search size={20} />, subtitle: "Find memories", component: <SearchComponent /> },
 //     { name: "Export ", icon: <Search size={20} />, subtitle: "Get PDF", component: <FamilyPDFGenerator  /> },
 //     { name: "Notification ", icon: <Search size={20} />, subtitle: "Create Notification", component: <CreateNotification /> },
-    
+
 // ];
 
 // // --- Custom Right Panel Components (Static placeholders for structure) ---
@@ -74,7 +74,7 @@
 //         { label: "This Month", value: 8 },
 //         { label: "Events", value: 3 },
 //     ];
-    
+
 //     // Static placeholder for recent activity
 //     const recentActivity = [
 //         "Grandma Sarah added a childhood memory 2 hours ago",
@@ -164,7 +164,7 @@
 //                     );
 //                 })}
 //             </nav>
-            
+
 //             {/* Static Bottom Links (Visible only on the sidebar) */}
 //             <nav className="mt-auto pt-4 border-t border-gray-200 space-y-1">
 //                 {[
@@ -198,7 +198,7 @@
 //     return (
 //         // Wrapper uses flex-col on mobile, flex-row on desktop (lg)
 //         <div className="flex flex-col lg:flex-row h-screen bg-gray-50 overflow-hidden"> 
-            
+
 //             {/* --- Mobile Header (Visible below lg) --- */}
 //             <header className="flex justify-between items-center p-4 border-b border-gray-200 lg:hidden bg-white sticky top-0 z-50 flex-shrink-0">
 //                  <h1 className="text-2xl font-bold text-purple-800">FAMLY</h1>
@@ -211,7 +211,7 @@
 //             <aside className={`fixed inset-y-0 left-0 w-64 bg-white z-50 transform 
 //                              ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out 
 //                              lg:static lg:w-72 lg:translate-x-0 lg:flex flex-col border-r flex-shrink-0`}>
-                
+
 //                 <div className="flex-1 overflow-y-auto">
 //                      {renderSidebarContent()}
 //                 </div>
@@ -219,20 +219,20 @@
 
 //             {/* 2. Main Content & Right Panel Wrapper (Takes up remaining horizontal space, scrolls vertically) */}
 //             <div className="flex-1 flex overflow-hidden">
-                
+
 //                 {/* Main Content Area: Scrolls vertically */}
 //                 <main className="flex-1 overflow-y-auto p-4 md:p-6">
 //                     <div className="max-w-4xl mx-auto lg:mx-0"> {/* Constrain width on smaller devices */}
 //                         {selectedComponent}
 //                     </div>
 //                 </main>
-                
+
 //                 {/* Right Panel: Hidden on mobile, visible on desktop (xl) */}
 //                 <aside className="hidden xl:block w-80 flex-shrink-0 bg-gray-50 border-l border-gray-200 overflow-y-auto">
 //                     <RightPanelContent />
 //                 </aside>
 //             </div>
-            
+
 //             {/* Overlay for mobile sidebar */}
 //             {isSidebarOpen && (
 //                 <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)}></div>
@@ -254,16 +254,16 @@ import SearchComponent from "../../components/DashboardComponents/Search";
 import Overview from "../../components/DashboardComponents/Overview";
 import TimelinePage from "../family/TimelinePage";
 import FamilyPDFGenerator from "../../components/DashboardComponents/PdfGenerator";
-import CreateNotification from "../../components/DashboardComponents/Notification";
+import SendMessageForm from "../../components/DashboardComponents/SendMessageForm";
 
 // 1. Refactored menuItems with Icons and Subtitles
 const menuItems = [
     { name: "Overview", icon: <Home size={20} />, subtitle: "Go-to-ward home", component: <Overview /> },
     { name: "Timeline", icon: <Clock size={20} />, subtitle: "Life events timeline", component: <TimelinePage /> },
-    { name: "Family Tree", icon: <TreePalm size={20} />, subtitle: "Family relationships", component: <FamilyTree /> }, 
+    { name: "Family Tree", icon: <TreePalm size={20} />, subtitle: "Family relationships", component: <FamilyTree /> },
     { name: "Search", icon: <Search size={20} />, subtitle: "Find memories", component: <SearchComponent /> },
     { name: "Export", icon: <Download size={20} />, subtitle: "Get PDF", component: <FamilyPDFGenerator /> },
-    { name: "Notification", icon: <Bell size={20} />, subtitle: "Create Notification", component: <CreateNotification /> },
+    { name: "Notification", icon: <Bell size={20} />, subtitle: "Create Notification", component: <SendMessageForm /> },
 ];
 
 // --- Custom Right Panel Components ---
@@ -291,8 +291,8 @@ const QuickActions = () => (
                 { name: "Invite Family", icon: <Users size={18} />, description: "Add new family members to your circle" },
                 { name: "Create Keepsake", icon: <Download size={18} />, description: "Export memories as a beautiful book" },
             ].map((action, index) => (
-                <button 
-                    key={index} 
+                <button
+                    key={index}
                     className="flex items-start p-3 w-full rounded-lg hover:bg-purple-50 transition-colors text-left"
                 >
                     <span className="text-purple-600 mr-3 mt-0.5 flex-shrink-0">{action.icon}</span>
@@ -313,7 +313,7 @@ const RightPanelContent = () => {
         { label: "This Month", value: 8 },
         { label: "Events", value: 3 },
     ];
-    
+
     const recentActivity = [
         "Grandma Sarah added a childhood memory 2 hours ago",
         "Uncle Mike uploaded family reunion photos 1 day ago",
@@ -347,7 +347,7 @@ export default function DashboardLayout() {
     const [isAuthChecked, setIsAuthChecked] = useState(false); // Track if auth check is complete
 
     const navigate = useNavigate();
-    const { isAuthenticated, auth } = useAuth(); 
+    const { isAuthenticated, auth } = useAuth();
 
     // SECURITY CHECK - Wait for auth to be loaded from localStorage
     useEffect(() => {
@@ -398,10 +398,9 @@ export default function DashboardLayout() {
                             key={item.name}
                             onClick={() => { setSelectedComponentName(item.name); setIsSidebarOpen(false); }}
                             className={`w-full flex items-start space-x-3 p-3 rounded-xl transition-all duration-200 text-left cursor-pointer
-                                ${
-                                    isActive
-                                        ? "bg-gradient-to-r from-purple-600 to-fuchsia-500 text-white shadow-lg"
-                                        : "text-purple-700 hover:bg-purple-50"
+                                ${isActive
+                                    ? "bg-gradient-to-r from-purple-600 to-fuchsia-500 text-white shadow-lg"
+                                    : "text-purple-700 hover:bg-purple-50"
                                 }`}
                         >
                             <div className={`pt-1 ${isActive ? "text-white" : "text-purple-600"}`}>
@@ -419,7 +418,7 @@ export default function DashboardLayout() {
                     );
                 })}
             </nav>
-            
+
             <nav className="mt-auto pt-4 border-t border-gray-200 space-y-1">
                 {[
                     { name: "Connections", icon: <Link size={18} />, subtitle: "Create operational links" },
@@ -471,12 +470,12 @@ export default function DashboardLayout() {
                         {selectedComponent}
                     </div>
                 </main>
-                
+
                 <aside className="hidden xl:block w-80 flex-shrink-0 bg-gray-50 border-l border-gray-200 overflow-y-auto">
                     <RightPanelContent />
                 </aside>
             </div>
-            
+
             {isSidebarOpen && (
                 <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setIsSidebarOpen(false)}></div>
             )}
