@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { Outlet } from "react-router-dom";
-import Footer from './components/Common/Footer';
-import Header from './components/Common/Header';
+
 
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 
+import Footer from './components/Common/Footer.jsx';
+import Header from './components/Common/Header.jsx';
 
 function App() {
   return (<>
